@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "agent": "./chat-chinook.py:agent"
+  },
+  "env": ".env"
+}

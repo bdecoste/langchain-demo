@@ -8,6 +8,7 @@ from deepagents import create_deep_agent
 from langchain.chat_models import init_chat_model
 from langchain.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
+from langchain.agents.middleware import ModelFallbackMiddleware
 
 SYSTEM_PROMPT = """You are a literary data assistant.
 
@@ -44,7 +45,7 @@ def fetch_text_from_url(url: str) -> str:
 
 
 model = init_chat_model(
-    "claude-opus-4-7",
+    "openai:gpt-5.4",
 #    temperature=0.5,
     timeout=600,
     max_tokens=25000,
@@ -68,14 +69,24 @@ agent = create_agent(
     tools=[fetch_text_from_url],
     system_prompt=SYSTEM_PROMPT,
     checkpointer=checkpointer,
+    middleware=[
+        ModelFallbackMiddleware(
+            "claude-opus-4-7",
+        ),
+    ],
 )
 
-deep_agent = create_deep_agent(
-    model=model,
-    tools=[fetch_text_from_url],
-    system_prompt=SYSTEM_PROMPT,
-    checkpointer=checkpointer,
-)
+#deep_agent = create_deep_agent(
+#    model=model,
+#    tools=[fetch_text_from_url],
+#    system_prompt=SYSTEM_PROMPT,
+#    checkpointer=checkpointer,
+#    middleware=[
+#        ModelFallbackMiddleware(
+#            "claude-opus-4-7",
+#        ),
+#    ],
+#)
 
 content = f"""Project Gutenberg hosts a full plain-text copy of F. Scott Fitzgerald's The Great Gatsby.
 URL: https://raw.githubusercontent.com/bdecoste/text/refs/heads/main/64317-0.txt 
@@ -96,11 +107,11 @@ agent_result = agent.invoke(
     config={"configurable": {"thread_id": "great-gatsby-lc"}},
 )
 
-print("deep agent ...", flush=True)
-deep_agent_result = deep_agent.invoke(
-    {"messages": [{"role": "user", "content": content}]},
-    config={"configurable": {"thread_id": "great-gatsby-da"}},
-)
+#print("deep agent ...", flush=True)
+#deep_agent_result = deep_agent.invoke(
+#    {"messages": [{"role": "user", "content": content}]},
+#    config={"configurable": {"thread_id": "great-gatsby-da"}},
+#)
 print(agent_result["messages"][-1].content_blocks)
 print("\n")
-print(deep_agent_result["messages"][-1].content_blocks)
+#print(deep_agent_result["messages"][-1].content_blocks)
