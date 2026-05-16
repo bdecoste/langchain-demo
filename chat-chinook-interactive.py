@@ -1,4 +1,8 @@
 import os
+
+from pprint import pprint
+
+from langgraph.checkpoint.memory import InMemorySaver
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
 from langchain_anthropic import ChatAnthropic
@@ -28,13 +32,29 @@ model = init_chat_model(
 toolkit = SQLDatabaseToolkit(db=db, llm=model)
 tools = toolkit.get_tools()
 
-system_prompt = """Please enter message:"""
+system_prompt = """
+
+You are the manager of a record store
+
+User: What is your favorite album?
+Record Store Manager: 2112
+
+Please use the below structure.
+
+Band: The name of the band
+Customer: The name of the customer
+Album: The name of the album
+
+"""
+
+checkpointer = InMemorySaver()
 
 # create_agent takes model, tools, and system_prompt directly
 agent = create_agent(
     model=model,
     tools=tools,
     system_prompt=system_prompt,
+    checkpointer=checkpointer,
     middleware=[
         ModelFallbackMiddleware(
             "claude-opus-4-7",
@@ -44,11 +64,18 @@ agent = create_agent(
 
 @traceable(name="Chat Bot", metadata={"thread_id": THREAD_ID})
 def chat_pipeline(messages: list, get_chat_history: bool = False):
-    for step in agent.stream(
-        {"messages": [("user", messages)]},
-        stream_mode="values",
-    ):
-        step["messages"][-1].pretty_print()
+    try:
+        for step in agent.stream(
+            {"messages": [("user", messages)]},
+            stream_mode="values",
+            config={"configurable": {"thread_id": THREAD_ID}}
+        ):
+            step["messages"][-1].pretty_print()
+
+        print("\n")
+        pprint(step["messages"])
+    except Exception as e:
+        print(f"An error occurred: {e}")
 
 while True:
     messages = input("\n\nPlease enter message: \n")
