@@ -1,7 +1,13 @@
 import os
+import base64
+import asyncio
 
 from pprint import pprint
+from dotenv import load_dotenv
+from uuid import uuid7
+from dataclasses import dataclass
 
+from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
@@ -10,9 +16,17 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import ModelFallbackMiddleware
 from langchain.chat_models import init_chat_model
 from langsmith import traceable
-from dotenv import load_dotenv
-from uuid import uuid7
+from langchain.tools import tool, ToolRuntime
 
+@dataclass
+class AlbumContext:
+    least_favorite_album: str = "U2"
+
+@tool
+def get_least_favorite_album(runtime: ToolRuntime) -> str:
+    """Get the least favourite album of the user"""
+    return runtime.context.least_favorite_album
+    
 THREAD_ID = str(uuid7())
 THREADS_DIR = os.path.join(os.path.dirname(__file__), "threads")
 
@@ -31,6 +45,7 @@ model = init_chat_model(
 # Same toolkit as before — these SQL tools haven't changed
 toolkit = SQLDatabaseToolkit(db=db, llm=model)
 tools = toolkit.get_tools()
+tools.append(get_least_favorite_album)
 
 system_prompt = """
 
@@ -55,6 +70,7 @@ agent = create_agent(
     tools=tools,
     system_prompt=system_prompt,
     checkpointer=checkpointer,
+    context_schema=AlbumContext,
     middleware=[
         ModelFallbackMiddleware(
             "claude-opus-4-7",
@@ -68,7 +84,8 @@ def chat_pipeline(messages: list, get_chat_history: bool = False):
         for step in agent.stream(
             {"messages": [("user", messages)]},
             stream_mode="values",
-            config={"configurable": {"thread_id": THREAD_ID}}
+            config={"configurable": {"thread_id": THREAD_ID}},
+            context=AlbumContext(),
         ):
             step["messages"][-1].pretty_print()
 

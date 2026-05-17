@@ -1,9 +1,12 @@
 import os
+import base64
+import asyncio
 
 from pprint import pprint
-from ipywidgets import FileUpload
-from IPython.display import display
+from dotenv import load_dotenv
+from uuid import uuid7
 
+from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
@@ -12,11 +15,12 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import ModelFallbackMiddleware
 from langchain.chat_models import init_chat_model
 from langsmith import traceable
-from dotenv import load_dotenv
-from uuid import uuid7
 
-uploader = FileUpload(accept='.png', multiple=False)
-display(uploader)
+
+uploaded_file = uploader.value[0]
+content_mv = uploaded_file["content"]
+img_bytes = bytes(content_mv)
+img_b64 = base64.b64encode(img_bytes).decode("utf-8")
 
 THREAD_ID = str(uuid7())
 THREADS_DIR = os.path.join(os.path.dirname(__file__), "threads")
@@ -52,14 +56,14 @@ Album: The name of the album
 
 """
 
-#checkpointer = InMemorySaver()
+checkpointer = InMemorySaver()
 
 # create_agent takes model, tools, and system_prompt directly
 agent = create_agent(
     model=model,
     tools=tools,
     system_prompt=system_prompt,
-#    checkpointer=checkpointer,
+    checkpointer=checkpointer,
     middleware=[
         ModelFallbackMiddleware(
             "claude-opus-4-7",
@@ -82,10 +86,20 @@ def chat_pipeline(messages: list, get_chat_history: bool = False):
     except Exception as e:
         print(f"An error occurred: {e}")
 
-#while True:
+while True:
 #    messages = input("\n\nPlease enter message: \n")
-
-messages = "What is your favorite album?"
-chat_pipeline(messages, get_chat_history=False)
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=[
+            {"type": "text", "text": "Use this image to answer."},
+            {
+                "type": "image",
+                "source_type": "base64",
+                "mime_type": "image/png",
+                "data": img_b64,
+            },
+        ]),
+    ]
+    chat_pipeline(messages, get_chat_history=False)
 
 
