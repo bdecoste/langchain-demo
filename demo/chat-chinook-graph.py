@@ -22,8 +22,11 @@ from langchain.agents.middleware import SummarizationMiddleware
 from langchain.chat_models import init_chat_model
 from langchain.tools import tool, ToolRuntime
 from langchain.agents.middleware import wrap_model_call, ModelRequest, ModelResponse
-from langgraph.checkpoint.memory import InMemorySaver
+from langchain_core.messages import ToolMessage
+from langgraph.prebuilt import ToolNode
+from langgraph.graph import StateGraph, MessagesState, END
 from langsmith import traceable
+
 
 # ---------------------------------------------------------------------------
 # Runtime context
@@ -31,7 +34,7 @@ from langsmith import traceable
 # ---------------------------------------------------------------------------
 
 @dataclass
-class AlbumContext:
+class AlbumContext(TypedDict, total=False):
     least_favorite_album: str = "Achtung Baby"
     user_role: Literal["internal", "external"] = "internal"
     customer_id: str = 23
@@ -109,7 +112,7 @@ def get_purchased_tracks(runtime: ToolRuntime) -> list[PurchasedTrack]:
 # ---------------------------------------------------------------------------
 
 @wrap_model_call
-def dynamic_tool_call(
+async def dynamic_tool_call(
     request: ModelRequest,
     handler: Callable[[ModelRequest], ModelResponse],
 ) -> ModelResponse:
@@ -118,6 +121,8 @@ def dynamic_tool_call(
     ctx = request.runtime.context
     user_role = ctx.user_role if ctx is not None else "external"
 
+    print(f"!!!!!!!!!! user_role {user_role}")
+
     if user_role == "internal":
         tools = [sql_query, get_least_favorite_album]
         request = request.override(tools=tools)
@@ -125,7 +130,7 @@ def dynamic_tool_call(
         tools = [web_search, get_purchased_tracks]
         request = request.override(tools=tools)
 
-    return handler(request)
+    return await handler(request)
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +164,7 @@ def sql_query(query: str) -> str:
 # ---------------------------------------------------------------------------
 
 model = init_chat_model(
-    "openai:gpt-5.4",
+    "claude-opus-4-7",
     timeout=600,
     max_tokens=25000,
     streaming=True,
@@ -186,29 +191,57 @@ Album: The name of the album
 
 """
 
-checkpointer = InMemorySaver()
-
 # ---------------------------------------------------------------------------
 # Agent
 # create_agent wires model + tools + middleware + persistent checkpointer.
 # ---------------------------------------------------------------------------
 
-agent = create_agent(
-    model=model,
-    tools=[web_search, sql_query, get_least_favorite_album, get_purchased_tracks],
-    system_prompt=system_prompt,
-    checkpointer=checkpointer,
-    context_schema=AlbumContext,
-    middleware=[
-        dynamic_tool_call,
-        ModelFallbackMiddleware("claude-opus-4-7"),
-        # SummarizationMiddleware(
-        #     model="claude-opus-4-7",
-        #     trigger=("tokens", 5000),
-        #     keep=("messages", 1),
-        # ),
-    ],
-)
+
+#agent = create_agent(
+#    model=model,
+#    tools=[web_search, sql_query, get_least_favorite_album, get_purchased_tracks],
+#    system_prompt=system_prompt,
+#    context_schema=AlbumContext,
+#    middleware=[
+#        dynamic_tool_call,
+#        ModelFallbackMiddleware("claude-opus-4-7"),
+#    ],
+#)
+
+# ---------------------------------------------------------------------------
+# Graph
+# ---------------------------------------------------------------------------
+
+
+def call_model(state: MessagesState):
+    return {"messages": [model.invoke(state["messages"])]}
+
+def route_to_tool(state: MessagesState):
+    last_msg = state["messages"][-1]
+    if not last_msg.tool_calls:
+        return END
+    # Route to the node named after the called tool
+    return last_msg.tool_calls[0]["name"]
+
+graph = StateGraph(MessagesState, context_schema=AlbumContext)   # <-- declare schema
+graph.add_node("agent", call_model)
+graph.add_node("get_purchased_tracks", ToolNode([get_purchased_tracks]))
+graph.add_node("web_search", ToolNode([web_search]))
+graph.add_node("sql_query", ToolNode([sql_query]))
+
+graph.set_entry_point("agent")
+graph.add_conditional_edges("agent", route_to_tool, {
+    "get_purchased_tracks": "get_purchased_tracks",
+    "web_search": "web_search",
+    "sql_query": "sql_query",
+    END: END,
+})
+
+# Every tool returns to the agent
+for tool_name in ["get_purchased_tracks", "web_search", "sql_query"]:
+    graph.add_edge(tool_name, "agent")
+
+agent = graph.compile()
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +270,4 @@ def chat_pipeline(messages: list, get_chat_history: bool = False):
 # Entry point
 # ---------------------------------------------------------------------------
 
-while True:
-    messages = input("\n\nPlease enter message: \n")
-    chat_pipeline(messages, get_chat_history=False)
+chat_pipeline("", get_chat_history=False)
