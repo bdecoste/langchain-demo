@@ -116,7 +116,8 @@ def dynamic_tool_call(
 ) -> ModelResponse:
     """Dynamically call tools based on the runtime context"""
 
-    user_role = request.runtime.context.user_role
+    ctx = request.runtime.context
+    user_role = ctx.user_role if ctx is not None else "external"
 
     if user_role == "internal":
         tools = [sql_query, get_least_favorite_album]
